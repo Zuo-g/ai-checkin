@@ -31,10 +31,13 @@ jobs:
       MINIMAX_DEVICE_ID:       ${{ secrets.MINIMAX_DEVICE_ID }}
 
       # ---- 推送（企业微信 / PushPlus，可只填一个）----
+      # 注意：Trae 脚本读 PLUSPLUS_TOKEN（Plus+Plus），
+      # 其他脚本读 PUSHPLUS_TOKEN（Push+Plus），这里统一互通。
+      # 配 PUSHPLUS_TOKEN 一条即可，两个脚本都能收到。
       WECOM_WEBHOOK:  ${{ secrets.WECOM_WEBHOOK }}
-      QYWX_TOKEN:     ${{ secrets.QYWX_TOKEN }}
-      PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
-      PLUSPLUS_TOKEN: ${{ secrets.PLUSPLUS_TOKEN }}
+      QYWX_TOKEN:     ${{ secrets.QYWX_TOKEN || secrets.WECOM_WEBHOOK }}
+      PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN || secrets.PLUSPLUS_TOKEN }}
+      PLUSPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN || secrets.PLUSPLUS_TOKEN }}
 
     steps:
       - name: 准备 Python
@@ -72,6 +75,7 @@ jobs:
 
       - name: 执行签到
         run: |
+          set -o pipefail
           cd scripts
           {
             echo "## 签到结果 $(date '+%F %T')"
