@@ -118,13 +118,30 @@ workflow 里的 cron 已经错开了整点（13 分），避免和全网其他�
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | 全部 401 | Secret 值带了引号 | 去掉引号，Secret 是纯文本 |
-| 第二次运行开始全 401 | 缓存被清了 | 重新获取 token 更新 Secret |
+| 第一次正常，第二次开始全 401 | **token 缓存路径写错**（脚本把缓存写在 `scripts/` 下，名字各不相同） | 已修正，见下方「token 缓存」 |
+| 日报里失败却显示 ✅ | 只按退出码判定，而脚本失败时仍 exit 0 | 已修正：退出码 + 日志关键词双判定 |
+| 日报时间比手机早/晚几小时 | runner 用 UTC | 已修正：强制按北京时间 UTC+8 |
+| Trae 报 `10101 refresh token is not matched` | refreshToken 被上一轮轮换作废，缓存没存下来 | 重新提取 refreshToken 更新 Secret |
 | Trae 报 `9074` | 设备号不对 | 从 `storage.json` 键名 `iCubeAuthInfo://icube-dc:` 后取真实设备号 |
 | Trae 报 `9095` | 一个设备号签了多个号 | 一个设备号只能配一个账号 |
 | Qoder 一直 pending | 缺 UMID 设备身份 | 在装有 Qoder 客户端的机器上跑一次取 token 流程 |
 | 手机收不到推送 | Secret 没填或填错 | 检查 `WECOM_WEBHOOK` / `PUSHPLUS_TOKEN` |
 | MiniMax 报 401 | `MINIMAX_USER_ID` 填错 | 必须是 storage.json 的 `realUserID`，不是 JWT 的 `user.id` |
 | 脚本报 ModuleNotFoundError | 依赖没装全 | workflow 里已装 `requests` + `python-dotenv`，如还缺可在该 step 追加 |
+
+### ⚠️ token 缓存（最容易踩的坑）
+
+三个脚本**每次续期都会轮换 token**，且都把新 token 写进「脚本所在目录」下的缓存文件。
+如果 `actions/cache` 路径没对上，每次运行都会拿 Secret 里那个已被轮换作废的旧 token 去刷，
+表现为**第一次正常、之后越刷越失效**。
+
+| 脚本 | 缓存文件（相对 `scripts/`） |
+|---|---|
+| Trae | `.trae_token_cache.json`（也可用 `TRAE_TOKEN_CACHE` 指定） |
+| MiniMax | `.minimax_token.json` |
+| WorkBuddy | `wb_refresh_tokens.json` + `WORKBUDDY_ACCESS_TOKEN.txt` |
+
+所以**不要在本地重复运行这些脚本去"验证一下"**——每跑一次就会把 Secret 里的 token 轮换掉。
 
 ---
 

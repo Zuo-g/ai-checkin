@@ -48,14 +48,17 @@ jobs:
       - name: 安装依赖
         run: pip install --quiet requests python-dotenv
 
-      # token 续期后会轮换，必须跨次保留，否则第二次运行必然 401
+      # token 续期后会轮换，必须跨次保留，否则第二次运行必然 401。
+      # 注意：三个脚本都把缓存写在「脚本所在目录」即 scripts/ 下，文件名各不相同，
+      # 路径写错就等于没缓存 —— refreshToken 每轮被轮换作废，就会「越刷越失效」。
       - name: 恢复 token 缓存
         uses: actions/cache@v4
         with:
           path: |
-            .trae_token.json
-            .minimax_token.json
-            .wb_intl_tokens.json
+            scripts/.trae_token_cache.json
+            scripts/.minimax_token.json
+            scripts/wb_refresh_tokens.json
+            scripts/WORKBUDDY_ACCESS_TOKEN.txt
           key: ai-checkin-token-${{ github.run_id }}
           restore-keys: ai-checkin-token-
 
@@ -87,6 +90,10 @@ jobs:
 
           : > ../logs/status.tsv
 
+          # 不少脚本签到失败时依然 exit 0（例如 token 被轮换作废），
+          # 只看退出码会把失败报成成功，所以必须同时扫日志。
+          FAIL_RE='token失效|鉴权失败|not matched|[^0-9]10101[^0-9]|STATUS_ERR|Traceback \(most recent|read timed out|ConnectionError|Errno '
+
           run_one () {
             local name="$1" file="$2" need="$3" key="$4"
             echo ""
@@ -102,7 +109,16 @@ jobs:
             set -e
             tail -20 "../logs/$key.log" || true
             local st="OK"
-            [ "$rc" -ne 0 ] && st="FAIL"
+            if [ "$rc" -ne 0 ] || grep -qEi "$FAIL_RE" "../logs/$key.log"; then
+              st="FAIL"
+              # 缓存里的 token 坏了就丢掉它，下一轮回落到 Secret 重新起链
+              case "$key" in
+                trae)      rm -f .trae_token_cache.json   ;;
+                minimax)   rm -f .minimax_token.json      ;;
+                workbuddy) rm -f wb_refresh_tokens.json   ;;
+              esac
+              echo "⚠️  $name 判定为失败（退出码 $rc + 日志扫描）"
+            fi
             printf '%s\t%s\t%s\t\n' "$name" "$key" "$st" >> ../logs/status.tsv
           }
 
@@ -250,7 +266,9 @@ jobs:
                       return tidy(l)[:110]
               return "执行失败，详见日志" if st == "FAIL" else ""
 
-          now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+          # Actions runner 用 UTC，直接 now() 会比北京时间少 8 小时
+          now = datetime.datetime.now(
+              datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
 
           def raw_log(key):
               path = "logs/%s.log" % key
