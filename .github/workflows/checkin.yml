@@ -155,17 +155,24 @@ jobs:
               except Exception:
                   return ""
 
+          _UID_CACHE = {}
+
           def qoder_uid(tok, base):
               # Qoder 的 /me/campaigns 会用 token 回传真实 uid
+              hit = _UID_CACHE.get((tok, base))
+              if hit is not None:
+                  return hit
               try:
                   req = urllib.request.Request(
                       base + "/sash/api/v1/me/campaigns",
                       headers={"Authorization": "Bearer " + tok,
                                "User-Agent": "Mozilla/5.0"})
                   with urllib.request.urlopen(req, timeout=12) as r:
-                      return str(json.loads(r.read().decode("utf-8", "replace")).get("uid") or "")
+                      uid = str(json.loads(r.read().decode("utf-8", "replace")).get("uid") or "")
               except Exception:
-                  return ""
+                  uid = ""
+              _UID_CACHE[(tok, base)] = uid
+              return uid
 
           TOKEN_SRC = {
               "qoder_cn":   ("QODER_TOKENS",        "https://openapi.qoder.com.cn"),
