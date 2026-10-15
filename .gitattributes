@@ -1,0 +1,7 @@
+# 强制 GitHub Actions 与 shell 脚本使用 LF 行尾
+# CRLF 会让 YAML 的多行 run 块和 shell 续行符失效
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.sh    text eol=lf
+*.py    text eol=lf
+*.md    text eol=lf

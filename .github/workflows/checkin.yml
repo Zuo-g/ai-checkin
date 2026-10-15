@@ -1,0 +1,128 @@
+name: AI 五平台每日签到
+
+on:
+  schedule:
+    # GitHub Actions 用 UTC，北京时间 = UTC+8
+    #   0:13 UTC  = 08:13 北京
+    #   2:13 UTC  = 10:13 北京  ← 排在 Qoder 活动窗口(10:00)开启之后
+    #   12:13 UTC = 20:13 北京
+    - cron: '13 0,2,12 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # ---- 平台凭据 ----
+      TRAE_REFRESH_TOKEN: ${{ secrets.TRAE_REFRESH_TOKEN }}
+      TRAE_ACCOUNTS:       ${{ secrets.TRAE_ACCOUNTS }}
+      WORKBUDDY_REFRESH_TOKEN: ${{ secrets.WORKBUDDY_REFRESH_TOKEN }}
+      QODER_TOKENS:            ${{ secrets.QODER_TOKENS }}
+      QODER_GLOBAL_TOKENS:     ${{ secrets.QODER_GLOBAL_TOKENS }}
+      ZCODE_CN_TOKENS:         ${{ secrets.ZCODE_CN_TOKENS }}
+      ZCODE_INTL_TOKENS:       ${{ secrets.ZCODE_INTL_TOKENS }}
+      MINIMAX_TOKEN:           ${{ secrets.MINIMAX_TOKEN }}
+      MINIMAX_USER_ID:         ${{ secrets.MINIMAX_USER_ID }}
+      MINIMAX_UUID:            ${{ secrets.MINIMAX_UUID }}
+      MINIMAX_DEVICE_ID:       ${{ secrets.MINIMAX_DEVICE_ID }}
+
+      # ---- 推送（企业微信 / PushPlus，可只填一个）----
+      WECOM_WEBHOOK:  ${{ secrets.WECOM_WEBHOOK }}
+      QYWX_TOKEN:     ${{ secrets.QYWX_TOKEN }}
+      PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+      PLUSPLUS_TOKEN: ${{ secrets.PLUSPLUS_TOKEN }}
+
+    steps:
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖
+        run: pip install --quiet requests python-dotenv
+
+      # token 续期后会轮换，必须跨次保留，否则第二次运行必然 401
+      - name: 恢复 token 缓存
+        uses: actions/cache@v4
+        with:
+          path: |
+            .trae_token.json
+            .minimax_token.json
+            .wb_intl_tokens.json
+          key: ai-checkin-token-${{ github.run_id }}
+          restore-keys: ai-checkin-token-
+
+      - name: 拉取签到脚本
+        run: |
+          mkdir -p scripts
+          base=https://raw.githubusercontent.com
+          set -e
+          curl -fsSL "$base/L0NE-6/Trae-AutoCheckin/main/trae_checkin.py"        -o scripts/trae_checkin.py
+          curl -fsSL "$base/L0NE-6/WorkBuddy-Daily/main/workbuddy_daily.py"     -o scripts/workbuddy_daily.py
+          curl -fsSL "$base/L0NE-6/Qoder-Daily/main/qoder_daily.py"             -o scripts/qoder_daily.py
+          curl -fsSL "$base/L0NE-6/ZCode-Daily/main/zcode_cn_daily.py"          -o scripts/zcode_cn_daily.py
+          curl -fsSL "$base/L0NE-6/ZCode-Daily/main/zcode_intl_daily.py"        -o scripts/zcode_intl_daily.py
+          curl -fsSL "$base/mgmg22/QinglongMy/main/minimax_checkin.py"          -o scripts/minimax_checkin.py
+          chmod +x scripts/*.py
+          ls -l scripts/
+
+      - name: 执行签到
+        run: |
+          cd scripts
+          {
+            echo "## 签到结果 $(date '+%F %T')"
+            echo ""
+            echo "| 平台 | 状态 |"
+            echo "|---|---|"
+          } > "$GITHUB_STEP_SUMMARY"
+
+          FAIL=0
+          run_one () {
+            local name="$1" file="$2" need="$3"
+            echo ""
+            echo "════════ $name ════════"
+            if [ -z "$need" ] || [ -z "${!need}" ]; then
+              echo "⏭️  未配置 $need，跳过"
+              echo "| $name | ⏭️ 跳过（未配置 $need） |" >> "$GITHUB_STEP_SUMMARY"
+              return 0
+            fi
+            if python3 "$file" 2>&1 | tail -40; then
+              echo "| $name | ✅ 成功 |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "| $name | ❌ 失败 |" >> "$GITHUB_STEP_SUMMARY"
+              FAIL=$((FAIL+1))
+            fi
+          }
+
+          run_one "Trae"      trae_checkin.py      TRAE_REFRESH_TOKEN
+          run_one "WorkBuddy" workbuddy_daily.py   WORKBUDDY_REFRESH_TOKEN
+          run_one "Qoder CN"  qoder_daily.py       QODER_TOKENS
+          run_one "Qoder Intl" qoder_daily.py      QODER_GLOBAL_TOKENS
+          run_one "ZCode CN"  zcode_cn_daily.py    ZCODE_CN_TOKENS
+          run_one "ZCode Intl" zcode_intl_daily.py ZCODE_INTL_TOKENS
+          run_one "MiniMax"   minimax_checkin.py   MINIMAX_TOKEN
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "失败数量：$FAIL" >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      # 失败时额外推一条告警，避免"静默漏签"
+      - name: 失败告警推送
+        if: failure()
+        run: |
+          MSG="【AI签到告警】$(date '+%F %T') 有任务执行失败，请到 GitHub Actions 查看日志：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ -n "$WECOM_WEBHOOK" ]; then
+            curl -fsS -X POST "$WECOM_WEBHOOK" -H 'Content-Type: application/json' \
+              -d "{\"msgtype\":\"text\",\"text\":{\"content\":\"$MSG\"}}" || true
+          elif [ -n "$QYWX_TOKEN" ]; then
+            curl -fsS -X POST "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=$QYWX_TOKEN" \
+              -H 'Content-Type: application/json' \
+              -d "{\"msgtype\":\"text\",\"text\":{\"content\":\"$MSG\"}}" || true
+          elif [ -n "$PUSHPLUS_TOKEN" ]; then
+            curl -fsS -X POST "https://www.pushplus.plus/send" \
+              -d "token=$PUSHPLUS_TOKEN&title=AI签到告警&content=$MSG" || true
+          fi
