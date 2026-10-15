@@ -70,6 +70,8 @@ jobs:
           curl -fsSL "$base/L0NE-6/ZCode-Daily/main/zcode_cn_daily.py"          -o scripts/zcode_cn_daily.py
           curl -fsSL "$base/L0NE-6/ZCode-Daily/main/zcode_intl_daily.py"        -o scripts/zcode_intl_daily.py
           curl -fsSL "$base/mgmg22/QinglongMy/main/minimax_checkin.py"          -o scripts/minimax_checkin.py
+          curl -fsSL "$base/mgmg22/QinglongMy/main/sendNotify.py"              -o scripts/sendNotify.py
+          curl -fsSL "$base/mgmg22/QinglongMy/main/vless_proxy.py"             -o scripts/vless_proxy.py
           chmod +x scripts/*.py
           ls -l scripts/
 
@@ -116,7 +118,7 @@ jobs:
       - name: 汇总并推送一条消息
         run: |
           python3 - <<'PYEOF'
-          import os, re, json, datetime, urllib.request, urllib.parse
+          import os, re, json, base64, datetime, urllib.request, urllib.parse
 
           rows = []
           if os.path.exists("logs/status.tsv"):
@@ -128,9 +130,89 @@ jobs:
 
           ICON = {"OK": "✅", "FAIL": "❌", "SKIP": "⏭️"}
           NOISE = re.compile(r"[﻿‌‍]")
+          ERR_RE = re.compile(
+              r"(Traceback \(most recent|[A-Za-z_.]*(?:Error|Exception)\b|Errno\s|"
+              r"HTTP\s*[45]\d\d|状态码\s*[45]\d\d|\b(?:401|403|429)\b|"
+              r"失败|错误|超时|invalid|expired|unauthorized|forbidden)", re.I)
 
           def clean(s):
               return NOISE.sub("", s).strip()
+
+          # ---------- 真实账号标识（不要只显示「账号1」）----------
+          def split_tokens(raw):
+              return [p.strip() for p in re.split(r"[\n;]+", raw or "") if p.strip()]
+
+          def short(s, n=22):
+              return s if len(s) <= n else s[:n - 5] + "…" + s[-4:]
+
+          def jwt_uid(tok):
+              # ZCode 的 token 是 JWT，payload 里直接带 user_id
+              try:
+                  seg = tok.split(".")[1]
+                  seg += "=" * (-len(seg) % 4)
+                  p = json.loads(base64.urlsafe_b64decode(seg))
+                  return str(p.get("user_id") or p.get("sub") or "")
+              except Exception:
+                  return ""
+
+          def qoder_uid(tok, base):
+              # Qoder 的 /me/campaigns 会用 token 回传真实 uid
+              try:
+                  req = urllib.request.Request(
+                      base + "/sash/api/v1/me/campaigns",
+                      headers={"Authorization": "Bearer " + tok,
+                               "User-Agent": "Mozilla/5.0"})
+                  with urllib.request.urlopen(req, timeout=12) as r:
+                      return str(json.loads(r.read().decode("utf-8", "replace")).get("uid") or "")
+              except Exception:
+                  return ""
+
+          TOKEN_SRC = {
+              "qoder_cn":   ("QODER_TOKENS",        "https://openapi.qoder.com.cn"),
+              "qoder_intl": ("QODER_GLOBAL_TOKENS", "https://openapi.qoder.sh"),
+              "zcode_cn":   ("ZCODE_CN_TOKENS",     ""),
+              "zcode_intl": ("ZCODE_INTL_TOKENS",   ""),
+          }
+
+          def accounts(key, log):
+              src = TOKEN_SRC.get(key)
+              if src:
+                  out = []
+                  for t in split_tokens(os.environ.get(src[0], "")):
+                      t = t.split("|")[0]
+                      u = qoder_uid(t, src[1]) if src[1] else jwt_uid(t)
+                      if u:
+                          out.append(u)
+                  if out:
+                      return out
+              if key == "minimax":
+                  u = (os.environ.get("MINIMAX_USER_ID") or "").strip()
+                  if u:
+                      return [u]
+              m = re.search(r"\[(\d{15,18})\]", log)     # Trae UID
+              if m:
+                  return [m.group(1)]
+              m = re.search(r"(\d{2,3}\*{3,}\d{2})", log)     # WorkBuddy 脱敏手机号
+              if m:
+                  return [m.group(1)]
+              return []
+
+          # 说明行的优先级：分数高的优先，同分取更靠后出现的
+          PRIO = [("RESULT=", 100), ("🏁", 92), ("✅签到", 88), ("签到:", 86),
+                  ("签到连签", 82), ("签到成功", 80), ("已签到", 76),
+                  ("今日已领取", 74), ("今日已签到", 74), ("剩余积分", 60),
+                  ("积分", 50), ("Credits", 58), ("套餐", 40), ("领取", 38)]
+
+          def tidy(l):
+              l = re.sub(r"^\[[\d:]{5,8}\](\[[^\]]{1,12}\])?\s*", "", l)
+              l = re.sub(r"账号\d+\s*账号\d+\s*[:：]\s*", "", l)
+              l = re.sub(r"^[\U0001F300-\U0001FAFF☀-➿ℹ️\s]+", "", l)
+              return l.strip()
+
+          # 方框横幅行（╔ ║ ╚）只是标题，不作为说明
+          def is_banner(l):
+              s = l.lstrip()
+              return bool(s) and s[0] in "╔╗╚╝║"
 
           def detail(key, st):
               path = "logs/%s.log" % key
@@ -138,38 +220,62 @@ jobs:
                   return "执行失败，详见日志" if st == "FAIL" else ""
               lines = [clean(l) for l in open(path, encoding="utf-8", errors="replace")]
               lines = [l for l in lines if l]
+              # 失败时优先给出真正的报错行，避免只显示「签到报告」这种标题
+              if st == "FAIL":
+                  for l in reversed(lines):
+                      if ERR_RE.search(l):
+                          return tidy(l)[:110]
               for l in reversed(lines):
                   m = re.search(r"RESULT=\S+\s*[|｜]\s*(.+)$", l)
                   if m:
-                      return m.group(1).strip()
-              for l in reversed(lines):
-                  if any(k in l for k in ("签到", "积分", "领取", "Credits", "连签", "套餐")):
-                      return l
+                      return tidy(m.group(1))[:110]
+              best, score = None, -1
+              for i, l in enumerate(lines):
+                  if is_banner(l):
+                      continue
+                  s = max([p for kw, p in PRIO if kw in l] or [0])
+                  if s >= score:
+                      best, score = l, s
+              if best and score > 0:
+                  return tidy(best)[:110]
               for l in reversed(lines):
                   if not l.startswith(("Traceback", "File ", " ", "\t")):
-                      return l
+                      return tidy(l)[:110]
               return "执行失败，详见日志" if st == "FAIL" else ""
 
           now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-          md = ["## AI 签到日报 · " + now, "", "| 平台 | 状态 | 说明 |", "|---|---|---|"]
-          ok = fail = skip = 0
-          for name, key, st, note in rows:
-              d = (note or detail(key, st)).replace("|", "/").replace("\n", " ")
-              d = re.sub(r"\s{2,}", " ", d).strip()[:70]
-              md.append("| %s | %s | %s |" % (clean(name), ICON.get(st, st), d or "-"))
-              if st == "OK":
-                  ok += 1
-              elif st == "FAIL":
-                  fail += 1
-              else:
-                  skip += 1
-          md += ["", "**成功 %d · 失败 %d · 跳过 %d**" % (ok, fail, skip)]
-          content = "\n".join(md)
 
-          open("summary.md", "w", encoding="utf-8").write(content + "\n")
+          def raw_log(key):
+              path = "logs/%s.log" % key
+              if not os.path.exists(path):
+                  return ""
+              return "\n".join(clean(l) for l in
+                               open(path, encoding="utf-8", errors="replace"))
+
+          def build(rs, heading):
+              md = ([heading + " · " + now, ""] if heading else [])
+              md += ["| 平台 | 账号 | 状态 | 说明 |", "|---|---|---|---|"]
+              for name, key, st, note in rs:
+                  d = (note or detail(key, st)).replace("|", "/").replace("\n", " ")
+                  d = re.sub(r"\s{2,}", " ", d).strip()[:70]
+                  who = "、".join(short(a) for a in accounts(key, raw_log(key)))
+                  md.append("| %s | %s | %s | %s |" % (
+                      clean(name), who or "-", ICON.get(st, st), d or "-"))
+              md.append("")
+              md.append("**成功 %d · 失败 %d**" % (
+                  sum(1 for r in rs if r[2] == "OK"),
+                  sum(1 for r in rs if r[2] == "FAIL")))
+              return "\n".join(md)
+
+          # 推送内容：不要标题（PushPlus 已用它做消息头）、不显示未配置的平台
+          content = build([r for r in rows if r[2] != "SKIP"], "")
+          # Actions 面板：保留完整信息，便于排查
+          summary = build(rows, "## AI 签到日报")
+
+          open("summary.md", "w", encoding="utf-8").write(summary + "\n")
           step = os.environ.get("GITHUB_STEP_SUMMARY")
           if step:
-              open(step, "a", encoding="utf-8").write(content + "\n")
+              open(step, "a", encoding="utf-8").write(summary + "\n")
           print(content)
 
           def post(url, data, headers=None):
