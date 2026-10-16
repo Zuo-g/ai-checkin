@@ -97,6 +97,23 @@ jobs:
           unset PUSHPLUS_TOKEN PLUSPLUS_TOKEN WECOM_WEBHOOK QYWX_TOKEN \
                 DINGTALK_WEBHOOK DINGTALK_SECRET BARK_URL 2>/dev/null || true
 
+          # ---- token 规范化 ----
+          # GitHub Secret 粘贴很容易带上引号、尾随换行或空格：
+          # Trae 会报 10101（token 与客户端不匹配），MiniMax 直接 401。
+          # 这里统一去掉 CR、首尾空白和成对引号，避免每次都要人肉排查。
+          norm () {
+            printf '%s' "$1" | tr -d '\r' \
+              | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+                    -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
+          }
+          for v in TRAE_REFRESH_TOKEN WORKBUDDY_REFRESH_TOKEN \
+                   QODER_TOKENS QODER_GLOBAL_TOKENS \
+                   ZCODE_CN_TOKENS ZCODE_INTL_TOKENS \
+                   MINIMAX_TOKEN MINIMAX_USER_ID; do
+            if [ -n "${!v-}" ]; then export "$v=$(norm "${!v}")"; fi
+          done
+          echo "规范化完成（token 长度：Trae ${#TRAE_REFRESH_TOKEN} / MiniMax ${#MINIMAX_TOKEN}）"
+
           : > ../logs/status.tsv
 
           # 不少脚本签到失败时依然 exit 0（例如 token 被轮换作废），
@@ -340,21 +357,27 @@ jobs:
                       return tidy(m.group(1) if m else l)[:80]
               return "执行失败，详见日志"
 
+          BADGE = {"OK": "✅ 成功", "FAIL": "❌ 失败", "SKIP": "⏭️ 跳过"}
+
           def build(rs, heading):
               md = ([heading, ""] if heading else [])
               for name, key, st, note in rows_of(rs):
+                  ic = ICON.get(st, st)
                   label = account_label(key, raw_log(key))
-                  md.append("**%s** · %s" % (clean(name), label))
+                  # 标题行：状态图标 + 平台名 · 账号 …… 右侧状态徽章
+                  md.append("%s **%s** · %s　　%s" % (
+                      ic, clean(name), label, BADGE.get(st, st)))
                   if st == "FAIL":
-                      body = fail_line(key)
+                      # 引用块渲染成带底色的警示条，成功项保持普通文本
+                      md.append("> " + fail_line(key))
                   else:
-                      bits = [b for b in (status_line(key, st),
-                                          streak_line(key),
-                                          credit_line(key)) if b]
-                      body = note or ("　·　".join(bits) if bits else "已签到")
-                  md.append("%s %s" % (ICON.get(st, st), body))
+                      main = note or status_line(key, st) or "已签到"
+                      extras = [b for b in (streak_line(key), credit_line(key)) if b]
+                      md.append(main)
+                      if extras:
+                          md.append("· " + " · ".join(extras))
                   md.append("")
-              md.append("**成功 %d · 失败 %d**" % (
+              md.append("📊 **成功 %d · 失败 %d**" % (
                   sum(1 for r in rs if r[2] == "OK"),
                   sum(1 for r in rs if r[2] == "FAIL")))
               return "\n".join(md).rstrip()
