@@ -529,3 +529,90 @@ jobs:
           for s in sent:
               print(s)
           PYEOF
+
+      # ---- 自愈闭环 ----
+      # Trae / MiniMax / WorkBuddy 的 token 每次续期都会轮换，旧值立即作废。
+      # 以前只能靠 actions/cache 跨次保留，但缓存会被驱逐（7 天不访问 / 超 10GB），
+      # 一旦缓存丢失就回落到 Secret 里的旧种子 → 10101 / 401。
+      # 这里把「本轮实际用掉并轮换出来的最新 token」写回 GitHub Secret，
+      # 让 Secret 始终持有可用值，形成 Secret(种子) → cache(主存) → Secret(自愈) 三层保险。
+      #
+      # ⚠️ 需要一次性配置：创建一个有 secrets 写权限的 PAT，存为 Secret `SECRET_UPDATER_TOKEN`
+      #    GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens
+      #    Repository access: 仅选 Zuo-g/ai-checkin
+      #    Repository permissions → Secrets: Read and write
+      - name: 回写最新 token 到 GitHub Secrets（自愈）
+        if: success() || failure()
+        env:
+          UPDATER_TOKEN: ${{ secrets.SECRET_UPDATER_TOKEN }}
+        run: |
+          if [ -z "$UPDATER_TOKEN" ]; then
+            echo "⚠️  未配置 SECRET_UPDATER_TOKEN，跳过 Secret 回写"
+            echo "   （token 仍保存在 actions/cache；如需自愈请按上方注释创建 PAT）"
+            exit 0
+          fi
+          python3 - <<'PYEOF'
+          import json, os, subprocess
+
+          UPDATER = os.environ.get("UPDATER_TOKEN", "")
+
+          def read_json(path):
+              try:
+                  with open(path, encoding="utf-8") as f:
+                      return json.load(f)
+              except Exception:
+                  return None
+
+          def set_secret(name, value):
+              """用 gh CLI 写回 Secret；失败只提示，不影响主流程"""
+              if not value or not UPDATER:
+                  return False
+              print("::add-mask::" + value)          # 防止 token 进日志
+              env = dict(os.environ, GH_TOKEN=UPDATER)
+              r = subprocess.run(
+                  ["gh", "secret", "set", name, "--body", value],
+                  env=env, capture_output=True, text=True)
+              if r.returncode == 0:
+                  print("  ✓ %s 已回写（长度 %d）" % (name, len(value)))
+                  return True
+              print("  ✗ %s 回写失败: %s" % (name, (r.stderr or "").strip()[:120]))
+              return False
+
+          n = 0
+
+          # ---- Trae：缓存形如 {账号键: {accessToken, refreshToken, ...}} ----
+          trae = read_json("scripts/.trae_token_cache.json")
+          if isinstance(trae, dict):
+              tok = ""
+              for rec in trae.values():
+                  if isinstance(rec, dict) and rec.get("refreshToken"):
+                      tok = rec["refreshToken"]
+                      break
+              if tok:
+                  n += set_secret("TRAE_REFRESH_TOKEN", tok)
+              else:
+                  print("  - Trae: 缓存里没找到 refreshToken，跳过")
+
+          # ---- MiniMax：缓存形如 {"token": "...", ...} ----
+          mm = read_json("scripts/.minimax_token.json")
+          if isinstance(mm, dict) and mm.get("token"):
+              n += set_secret("MINIMAX_TOKEN", mm["token"])
+          elif mm is not None:
+              print("  - MiniMax: 缓存里没找到 token，跳过")
+
+          # ---- WorkBuddy：Secret 形如 手机号:AT:RT（多账号换行分隔）----
+          wb = read_json("scripts/wb_refresh_tokens.json")
+          if isinstance(wb, dict):
+              lines = []
+              for phone, rec in wb.items():
+                  if isinstance(rec, dict):
+                      at, rt = rec.get("access_token", ""), rec.get("refresh_token", "")
+                      if at and rt:
+                          lines.append("%s:%s:%s" % (phone, at, rt))
+              if lines:
+                  n += set_secret("WORKBUDDY_REFRESH_TOKEN", "\n".join(lines))
+              else:
+                  print("  - WorkBuddy: 缓存里没找到 AT:RT，跳过")
+
+          print("── Secret 回写完成：%d 个已更新 ──" % n)
+          PYEOF
