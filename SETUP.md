@@ -43,6 +43,7 @@ GitHub 网页新建文件时，如果不给 `.yml` 后缀会自动加 `.txt`，*
 |---|---|:-:|
 | `TRAE_REFRESH_TOKEN` | Trae refreshToken（单账号） | ⭕ |
 | `TRAE_ACCOUNTS` | accounts 数组整行 JSON（多账号，优先于上一条） | ⭕ |
+| `TRAE_DEVICE_ID` | 客户端真实注册设备号，见下方「Trae 设备号」 | ⭕ |
 | `WORKBUDDY_REFRESH_TOKEN` | 每行一个 `手机号:AT:RT` | ⭕ |
 | `QODER_TOKENS` | 国内版，多账号换行或 `&` | ⭕ |
 | `QODER_GLOBAL_TOKENS` | 国际版（每天 100 Credits） | ⭕ |
@@ -137,12 +138,37 @@ workflow 里的 cron 已经错开了整点（13 分），避免和全网其他�
 | 日报里失败却显示 ✅ | 只按退出码判定，而脚本失败时仍 exit 0 | 已修正：退出码 + 日志关键词双判定 |
 | 日报时间比手机早/晚几小时 | runner 用 UTC | 已修正：强制按北京时间 UTC+8 |
 | Trae 报 `10101 refresh token is not matched` | refreshToken 被上一轮轮换作废，缓存没存下来 | 重新提取 refreshToken 更新 Secret |
-| Trae 报 `9074` | 设备号不对 | 从 `storage.json` 键名 `iCubeAuthInfo://icube-dc:` 后取真实设备号 |
-| Trae 报 `9095` | 一个设备号签了多个号 | 一个设备号只能配一个账号 |
+| Trae 报 `9074` | 设备号不对 / 触发限流 | 用客户端真实设备号；限流等下轮 cron 补签 |
+| Trae 报 `9095` | 该**设备**今天已被签过（可能签的是别的账号），不代表本账号签到 | 检查 `TRAE_DEVICE_ID` 是否为本账号客户端真实注册号 |
+| **Trae 显示成功但 App 里仍未签到** | **缺 `TRAE_DEVICE_ID`**，脚本用了生成的假设备号 | **必填**，见下方「Trae 设备号」 |
 | Qoder 一直 pending | 缺 UMID 设备身份 | 在装有 Qoder 客户端的机器上跑一次取 token 流程 |
 | 手机收不到推送 | Secret 没填或填错 | 检查 `WECOM_WEBHOOK` / `PUSHPLUS_TOKEN` |
 | MiniMax 报 401 | `MINIMAX_USER_ID` 填错 | 必须是 storage.json 的 `realUserID`，不是 JWT 的 `user.id` |
 | 脚本报 ModuleNotFoundError | 依赖没装全 | workflow 里已装 `requests` + `python-dotenv`，如还缺可在该 step 追加 |
+
+### ⚠️ Trae 设备号（不配就永远签不上）
+
+Trae 的签到接口**按 `x-device-id` 维度**判断「今天签没签」。这个号必须是 Trae 客户端
+**真实注册过**的那串十进制数字，脚本自己生成的一律无效；而且**一个设备号一天只能签一个账号**。
+
+在 Windows 上从客户端的 storage.json 取：
+
+```
+%APPDATA%\Trae CN\User\globalStorage\storage.json
+```
+
+里面形如 `iCubeAuthInfo://icube-dc:<设备号>` 的键，冒号后面那串就是：
+
+```powershell
+Select-String -Path "$env:APPDATA\Trae CN\User\globalStorage\storage.json" -Pattern 'icube-dc:(\d+)' |
+  ForEach-Object { $_.Matches[0].Groups[1].Value }
+```
+
+把结果填进 Secret `TRAE_DEVICE_ID`。
+
+⚠️ 没配的表现很隐蔽：脚本会**打印「今日已签到」并 exit 0**，日报显示 ✅，
+但客户端里始终还是未签到——因为那个假设备号当天已被别的账号用掉了。
+workflow 里已加检测：日志同时出现「今日已签: False」和 `9095` 时按失败上报。
 
 ### ⚠️ token 缓存（最容易踩的坑）
 

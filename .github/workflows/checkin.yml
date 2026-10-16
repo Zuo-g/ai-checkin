@@ -20,6 +20,9 @@ jobs:
       # ---- 平台凭据 ----
       TRAE_REFRESH_TOKEN: ${{ secrets.TRAE_REFRESH_TOKEN }}
       TRAE_ACCOUNTS:       ${{ secrets.TRAE_ACCOUNTS }}
+      # 必填！签到按「设备号」维度判定，没有客户端真实注册过的设备号会被拒成
+      # 9074 或误报 9095（该设备当天已被别的账号用过），App 里会显示仍未签到。
+      TRAE_DEVICE_ID:      ${{ secrets.TRAE_DEVICE_ID }}
       WORKBUDDY_REFRESH_TOKEN: ${{ secrets.WORKBUDDY_REFRESH_TOKEN }}
       QODER_TOKENS:            ${{ secrets.QODER_TOKENS }}
       QODER_GLOBAL_TOKENS:     ${{ secrets.QODER_GLOBAL_TOKENS }}
@@ -144,6 +147,14 @@ jobs:
                 workbuddy) rm -f wb_refresh_tokens.json   ;;
               esac
               echo "⚠️  $name 判定为失败（退出码 $rc + 日志扫描）"
+            fi
+            # Trae 的 9095 = 「当前设备今日已被签过」，可能指的是别的账号，
+            # 脚本会当成已签到上报。若账号状态仍是未签到，按失败处理，别报假成功。
+            if [ "$st" = "OK" ] && [ "$key" = "trae" ] \
+               && grep -q '今日已签: False' "../logs/$key.log" \
+               && grep -q '9095' "../logs/$key.log"; then
+              st="FAIL"
+              echo "⚠️  Trae 返回 9095 但账号仍未签到 —— 设备号被别的账号占用，请检查 TRAE_DEVICE_ID"
             fi
             printf '%s\t%s\t%s\t\n' "$name" "$key" "$st" >> ../logs/status.tsv
           }
