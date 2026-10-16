@@ -34,10 +34,10 @@ jobs:
       TRAE_LABEL:      ${{ secrets.TRAE_LABEL }}
       WORKBUDDY_LABEL: ${{ secrets.WORKBUDDY_LABEL }}
       QODER_CN_LABEL:  ${{ secrets.QODER_CN_LABEL }}
-      QODER_INTL_LABEL:${{ secrets.QODER_INTL_LABEL }}
-      ZCODE_CN_LABEL:  ${{ secrets.ZCODE_CN_LABEL }}
-      ZCODE_INTL_LABEL:${{ secrets.ZCODE_INTL_LABEL }}
-      MINIMAX_LABEL:   ${{ secrets.MINIMAX_LABEL }}
+      QODER_INTL_LABEL: ${{ secrets.QODER_INTL_LABEL }}
+      ZCODE_CN_LABEL:     ${{ secrets.ZCODE_CN_LABEL }}
+      ZCODE_INTL_LABEL:   ${{ secrets.ZCODE_INTL_LABEL }}
+      MINIMAX_LABEL:      ${{ secrets.MINIMAX_LABEL }}
 
       # ---- 推送（企业微信 / PushPlus，可只填一个）----
       # 注意：Trae 脚本读 PLUSPLUS_TOKEN（Plus+Plus），
