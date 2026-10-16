@@ -396,9 +396,99 @@ jobs:
           def rows_of(rs):
               return [(n, k, s, (nt or "").replace("|", "/").strip()) for n, k, s, nt in rs]
 
+          # ---------- HTML 卡片（PushPlus template=html 专用）----------
+          # 只用内联 style，不用 class/id/外部 CSS，避免 PushPlus 清洗；
+          # 用 display:table-cell 而不是 flex，兼容微信内置浏览器老版本。
+          C_OK, C_BAD = "#22a45d", "#e05252"
+          BG_OK, BG_BAD = "#eaf7ee", "#fdeeee"
 
-          # 推送内容：不要标题（PushPlus 已用它做消息头）、不显示未配置的平台
+          def esc(s):
+              return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+          def build_html(rs, heading):
+              out = []
+              out.append(
+                  '<div style="background:#fff;padding:0 12px 20px;'
+                  'font-family:-apple-system,BlinkMacSystemFont,\'PingFang SC\','
+                  '\'Helvetica Neue\',Arial,sans-serif;font-size:15px;color:#222;'
+                  'line-height:1.55;-webkit-text-size-adjust:100%;">'
+              )
+              if heading:
+                  out.append(
+                      '<div style="font-size:22px;font-weight:700;color:#111;'
+                      'border-left:5px solid #2b6cff;padding-left:10px;'
+                      'margin:4px 0 6px;">%s</div>' % esc(heading)
+                  )
+                  out.append(
+                      '<div style="color:#8a8a8a;font-size:13px;margin:0 0 16px 15px;">'
+                      '朝阳 %s</div>' % esc(heading.replace("AI 签到日报 · ", ""))
+                  )
+              for name, key, st, note in rows_of(rs):
+                  ok = (st == "OK")
+                  ic = ("&#10004;" if ok else "&#10007;")
+                  color = C_OK if ok else C_BAD
+                  bg    = BG_OK if ok else BG_BAD
+                  label = account_label(key, raw_log(key))
+                  badge = BADGE.get(st, st)
+                  out.append(
+                      '<div style="border:1px solid #ececec;border-radius:12px;'
+                      'padding:12px 14px;margin:0 0 12px;background:#fff;">'
+                  )
+                  out.append(
+                      '<div style="display:table;width:100%%;">'
+                      '<div style="display:table-cell;vertical-align:middle;">'
+                      '<span style="display:inline-block;width:26px;height:26px;'
+                      'line-height:26px;border-radius:50%%;background:%s;color:#fff;'
+                      'text-align:center;font-size:15px;font-weight:700;'
+                      'margin-right:8px;vertical-align:middle;">%s</span>'
+                      '<span style="font-size:18px;font-weight:700;color:#111;'
+                      'vertical-align:middle;">%s</span>'
+                      '<span style="color:#999;font-size:13px;vertical-align:middle;'
+                      'margin-left:6px;">· %s</span>'
+                      '</div>'
+                      '<div style="display:table-cell;vertical-align:middle;'
+                      'text-align:right;white-space:nowrap;">'
+                      '<span style="display:inline-block;background:%s;color:%s;'
+                      'border-radius:12px;padding:2px 10px;font-size:12px;'
+                      'font-weight:600;">%s %s</span>'
+                      '</div></div>' % (color, ic, esc(clean(name)), esc(label),
+                                        bg, color, ic, esc(badge))
+                  )
+                  if not ok:
+                      out.append(
+                          '<div style="background:#fdf1f1;border-radius:8px;'
+                          'padding:8px 12px;margin-top:10px;color:#c0392b;'
+                          'font-size:13px;white-space:pre-wrap;">%s</div>'
+                          % esc(fail_line(key))
+                      )
+                  else:
+                      main = note or status_line(key, st) or "已签到"
+                      extras = [b for b in (streak_line(key), credit_line(key)) if b]
+                      out.append('<div style="margin-top:8px;color:#333;font-size:15px;">%s</div>'
+                                 % esc(main))
+                      if extras:
+                          out.append('<div style="margin-top:2px;color:#666;font-size:13px;">· %s</div>'
+                                     % esc(" · ".join(extras)))
+                  out.append('</div>')
+              n_ok  = sum(1 for r in rs if r[2] == "OK")
+              n_bad = sum(1 for r in rs if r[2] == "FAIL")
+              out.append(
+                  '<div style="border:1px solid #ececec;border-radius:12px;'
+                  'padding:14px 16px;margin-top:4px;background:#fff;">'
+                  '<span style="color:#2b6cff;font-size:18px;margin-right:8px;">&#128202;</span>'
+                  '<span style="font-size:18px;font-weight:700;color:#111;">'
+                  '成功 <span style="color:%s;">%d</span> · 失败 <span style="color:%s;">%d</span>'
+                  '</span></div>' % (C_OK, n_ok, C_BAD, n_bad)
+              )
+              out.append('</div>')
+              return "".join(out)
+
+
+          # 推送内容：不显示未配置的平台。
+          # markdown 版不要标题（PushPlus 已用它做消息头）；HTML 版把标题做进内容里，
+          # 这样卡片顶部能显示「AI 签到日报 · 日期 时间」（与截图一致）。
           content = build([r for r in rows if r[2] != "SKIP"], "")
+          content_html = build_html([r for r in rows if r[2] != "SKIP"], "AI 签到日报 · " + now)
           # Actions 面板：保留完整信息，便于排查
           summary = build(rows, "## AI 签到日报 · " + now)
 
@@ -420,9 +510,10 @@ jobs:
           sent = []
           pp = os.environ.get("PUSHPLUS_TOKEN", "")
           if pp:
+              # PushPlus 走 HTML 卡片模板
               body = urllib.parse.urlencode({
                   "token": pp, "title": title,
-                  "template": "markdown", "content": content}).encode()
+                  "template": "html", "content": content_html}).encode()
               sent.append("PushPlus -> " + post("https://www.pushplus.plus/send", body)[:150])
           wc = os.environ.get("WECOM_WEBHOOK", "")
           qy = os.environ.get("QYWX_TOKEN", "")
