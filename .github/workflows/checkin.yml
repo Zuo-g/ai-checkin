@@ -485,10 +485,10 @@ jobs:
 
 
           # 推送内容：不显示未配置的平台。
-          # markdown 版不要标题（PushPlus 已用它做消息头）；HTML 版把标题做进内容里，
-          # 这样卡片顶部能显示「AI 签到日报 · 日期 时间」（与截图一致）。
+          # markdown 版不要标题（PushPlus 已用它做消息头）；HTML 版也不要把标题做进内容，
+          # 否则 PushPlus 顶部渲染一次（title）+ 内容里又渲染一次 = 重复显示。
           content = build([r for r in rows if r[2] != "SKIP"], "")
-          content_html = build_html([r for r in rows if r[2] != "SKIP"], "AI 签到日报 · " + now)
+          content_html = build_html([r for r in rows if r[2] != "SKIP"], "")
           # Actions 面板：保留完整信息，便于排查
           summary = build(rows, "## AI 签到日报 · " + now)
 
