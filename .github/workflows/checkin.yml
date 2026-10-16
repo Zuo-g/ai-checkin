@@ -30,6 +30,15 @@ jobs:
       MINIMAX_UUID:            ${{ secrets.MINIMAX_UUID }}
       MINIMAX_DEVICE_ID:       ${{ secrets.MINIMAX_DEVICE_ID }}
 
+      # ---- 账号显示名（可选，逗号分隔多账号；不填则显示真实 ID 短形式）----
+      TRAE_LABEL:      ${{ secrets.TRAE_LABEL }}
+      WORKBUDDY_LABEL: ${{ secrets.WORKBUDDY_LABEL }}
+      QODER_CN_LABEL:  ${{ secrets.QODER_CN_LABEL }}
+      QODER_INTL_LABEL:${{ secrets.QODER_INTL_LABEL }}
+      ZCODE_CN_LABEL:  ${{ secrets.ZCODE_CN_LABEL }}
+      ZCODE_INTL_LABEL:${{ secrets.ZCODE_INTL_LABEL }}
+      MINIMAX_LABEL:   ${{ secrets.MINIMAX_LABEL }}
+
       # ---- 推送（企业微信 / PushPlus，可只填一个）----
       # 注意：Trae 脚本读 PLUSPLUS_TOKEN（Plus+Plus），
       # 其他脚本读 PUSHPLUS_TOKEN（Push+Plus），这里统一互通。
@@ -146,8 +155,10 @@ jobs:
 
           ICON = {"OK": "✅", "FAIL": "❌", "SKIP": "⏭️"}
           NOISE = re.compile(r"[﻿‌‍]")
+          # 与 bash 侧 FAIL_RE 保持一致：只有真正失败时才用，别把正常行误判成报错
           ERR_RE = re.compile(
-              r"(Traceback \(most recent|[A-Za-z_.]*(?:Error|Exception)\b|Errno\s|"
+              r"(token失效|鉴权失败|not matched|[^0-9]10101[^0-9]|AUTH_EXPIRED|STATUS_ERR|"
+              r"Traceback \(most recent|[A-Za-z_.]*(?:Error|Exception)\b|Errno\s|"
               r"HTTP\s*[45]\d\d|状态码\s*[45]\d\d|\b(?:401|403|429)\b|"
               r"失败|错误|超时|invalid|expired|unauthorized|forbidden)", re.I)
 
@@ -220,51 +231,24 @@ jobs:
                   return [m.group(1)]
               return []
 
-          # 说明行的优先级：分数高的优先，同分取更靠后出现的
-          PRIO = [("RESULT=", 100), ("🏁", 92), ("✅签到", 88), ("签到:", 86),
-                  ("签到连签", 82), ("签到成功", 80), ("已签到", 76),
-                  ("今日已领取", 74), ("今日已签到", 74), ("剩余积分", 60),
-                  ("积分", 50), ("Credits", 58), ("套餐", 40), ("领取", 38)]
+          # ---------- 账号显示名 ----------
+          # 上游脚本只认序号（「账号1」），拿不到昵称；这里支持用 *_LABEL
+          # secret 写人话（如「星野·主号」），没配就退回真实 ID 的短形式。
+          LABEL_ENV = {
+              "trae": "TRAE_LABEL", "workbuddy": "WORKBUDDY_LABEL",
+              "qoder_cn": "QODER_CN_LABEL", "qoder_intl": "QODER_INTL_LABEL",
+              "zcode_cn": "ZCODE_CN_LABEL", "zcode_intl": "ZCODE_INTL_LABEL",
+              "minimax": "MINIMAX_LABEL",
+          }
 
-          def tidy(l):
-              l = re.sub(r"^\[[\d:]{5,8}\](\[[^\]]{1,12}\])?\s*", "", l)
-              l = re.sub(r"账号\d+\s*账号\d+\s*[:：]\s*", "", l)
-              l = re.sub(r"^[\U0001F300-\U0001FAFF☀-➿ℹ️\s]+", "", l)
-              return l.strip()
+          def account_label(key, log):
+              names = [n.strip() for n in
+                       re.split(r"[,，]", os.environ.get(LABEL_ENV.get(key, ""), "")) if n.strip()]
+              if names:
+                  return "、".join(names)
+              ids = accounts(key, log)
+              return "、".join(short(a) for a in ids) if ids else "未命名账号"
 
-          # 方框横幅行（╔ ║ ╚）只是标题，不作为说明
-          def is_banner(l):
-              s = l.lstrip()
-              return bool(s) and s[0] in "╔╗╚╝║"
-
-          def detail(key, st):
-              path = "logs/%s.log" % key
-              if not os.path.exists(path):
-                  return "执行失败，详见日志" if st == "FAIL" else ""
-              lines = [clean(l) for l in open(path, encoding="utf-8", errors="replace")]
-              lines = [l for l in lines if l]
-              # 失败时优先给出真正的报错行，避免只显示「签到报告」这种标题
-              if st == "FAIL":
-                  for l in reversed(lines):
-                      if ERR_RE.search(l):
-                          return tidy(l)[:110]
-              for l in reversed(lines):
-                  m = re.search(r"RESULT=\S+\s*[|｜]\s*(.+)$", l)
-                  if m:
-                      return tidy(m.group(1))[:110]
-              best, score = None, -1
-              for i, l in enumerate(lines):
-                  if is_banner(l):
-                      continue
-                  s = max([p for kw, p in PRIO if kw in l] or [0])
-                  if s >= score:
-                      best, score = l, s
-              if best and score > 0:
-                  return tidy(best)[:110]
-              for l in reversed(lines):
-                  if not l.startswith(("Traceback", "File ", " ", "\t")):
-                      return tidy(l)[:110]
-              return "执行失败，详见日志" if st == "FAIL" else ""
 
           # Actions runner 用 UTC，直接 now() 会比北京时间少 8 小时
           now = datetime.datetime.now(
@@ -277,25 +261,112 @@ jobs:
               return "\n".join(clean(l) for l in
                                open(path, encoding="utf-8", errors="replace"))
 
+          # 排版：手机上表格会被折成竖条（WorkBuddy → Wo/rkB/udd/y），
+          # 改成「平台名 · 账号名」一行、下面跟签到与积分，手机上才读得下去。
+          BOX = "╔╗╚╝║┌┐└┘├┤┬┴┼│─┣┫━┃╭╮╰╯"
+          JUNK = re.compile(r"未配置推送渠道|本次只记录日志|取消推送|未设置|已写回|凭据体检")
+
+          def tidy(l):
+              l = re.sub(r"^\[[\d:]{5,8}\](\[[^\]]{1,12}\])?\s*", "", l)
+              l = re.sub(r"账号\d+\s*账号\d+\s*[:：]\s*", "", l)
+              l = l.strip().strip(BOX).strip()
+              l = re.sub(r"^[\U0001F300-\U0001FAFF☀-➿ℹ️\s]+", "", l)
+              return l.strip()
+
+          def usable(l):
+              s = l.lstrip()
+              return bool(s) and s[0] not in BOX and not JUNK.search(l)
+
+          def compact(s):
+              s = tidy(s)
+              s = re.sub(r"^\[[^\]]{1,10}\]\s*", "", s)
+              s = re.sub(r"^\d{6,}\s*[:：]\s*", "", s)
+              s = re.sub(r"^(今日)?签到\s*[:：]\s*", "", s)
+              s = re.sub(r"（\d{4}-\d{2}-\d{2}[^）]*）", "", s)
+              m = re.match(r"^(.*?)（([^）]{1,12})）", s)      # 「今日已签到（第 4 天）」
+              if m:
+                  s = m.group(1).strip() + " " + m.group(2).strip()
+              if len(s) > 30:
+                  s = re.split(r"[，,（(]", s)[0].strip()
+              return s[:32].strip(" ：:，,")
+
+          def read_log(key):
+              path = "logs/%s.log" % key
+              if not os.path.exists(path):
+                  return []
+              return [clean(l) for l in open(path, encoding="utf-8", errors="replace")]
+
+          def status_line(key, st):
+              """签到情况：优先 RESULT= 行，其次按关键词挑一句"""
+              lines = [l for l in read_log(key) if usable(l)]
+              for l in reversed(lines):
+                  m = re.search(r"RESULT=\S+\s*[|｜]\s*(.+)$", l)
+                  if m:
+                      return compact(m.group(1))
+              PRIO = [("✅签到", 90), ("签到:", 88), ("签到连签", 86),
+                      ("已签到", 80), ("今日已领取", 76), ("今日已签到", 76),
+                      ("签到成功", 78), ("可领取", 60), ("套餐", 58)]
+              best, score = None, -1
+              for l in lines:
+                  s = max([p for kw, p in PRIO if kw in l] or [0])
+                  if s >= score:
+                      best, score = l, s
+              return compact(best) if best and score > 0 else ""
+
+          def credit_line(key):
+              """积分情况"""
+              lines = read_log(key)
+              for pat in (r"剩余积分合计\s*([\d.]+)", r"积分\s*[:：]\s*([\d.]+)"):
+                  for l in lines:
+                      m = re.search(pat, l)
+                      if m:
+                          return "积分 %s" % m.group(1)
+              return ""
+
+          def streak_line(key):
+              lines = read_log(key)
+              for l in lines:
+                  m = re.search(r"签到连签\s*(\d+)\s*天", l)
+                  if m:
+                      return "连签 %s 天" % m.group(1)
+              return ""
+
+          def fail_line(key):
+              """失败原因：排除方框横幅和通知类废话后，取真正的报错行"""
+              lines = [l for l in read_log(key) if usable(l)]
+              for l in reversed(lines):
+                  if ERR_RE.search(l):
+                      m = re.search(r"RESULT=\S+\s*[|｜]\s*(.+)$", l)
+                      return tidy(m.group(1) if m else l)[:80]
+              return "执行失败，详见日志"
+
           def build(rs, heading):
-              md = ([heading + " · " + now, ""] if heading else [])
-              md += ["| 平台 | 账号 | 状态 | 说明 |", "|---|---|---|---|"]
-              for name, key, st, note in rs:
-                  d = (note or detail(key, st)).replace("|", "/").replace("\n", " ")
-                  d = re.sub(r"\s{2,}", " ", d).strip()[:70]
-                  who = "、".join(short(a) for a in accounts(key, raw_log(key)))
-                  md.append("| %s | %s | %s | %s |" % (
-                      clean(name), who or "-", ICON.get(st, st), d or "-"))
-              md.append("")
+              md = ([heading, ""] if heading else [])
+              for name, key, st, note in rows_of(rs):
+                  label = account_label(key, raw_log(key))
+                  md.append("**%s** · %s" % (clean(name), label))
+                  if st == "FAIL":
+                      body = fail_line(key)
+                  else:
+                      bits = [b for b in (status_line(key, st),
+                                          streak_line(key),
+                                          credit_line(key)) if b]
+                      body = note or ("　·　".join(bits) if bits else "已签到")
+                  md.append("%s %s" % (ICON.get(st, st), body))
+                  md.append("")
               md.append("**成功 %d · 失败 %d**" % (
                   sum(1 for r in rs if r[2] == "OK"),
                   sum(1 for r in rs if r[2] == "FAIL")))
-              return "\n".join(md)
+              return "\n".join(md).rstrip()
+
+          def rows_of(rs):
+              return [(n, k, s, (nt or "").replace("|", "/").strip()) for n, k, s, nt in rs]
+
 
           # 推送内容：不要标题（PushPlus 已用它做消息头）、不显示未配置的平台
           content = build([r for r in rows if r[2] != "SKIP"], "")
           # Actions 面板：保留完整信息，便于排查
-          summary = build(rows, "## AI 签到日报")
+          summary = build(rows, "## AI 签到日报 · " + now)
 
           open("summary.md", "w", encoding="utf-8").write(summary + "\n")
           step = os.environ.get("GITHUB_STEP_SUMMARY")

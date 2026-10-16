@@ -52,6 +52,21 @@ GitHub 网页新建文件时，如果不给 `.yml` 后缀会自动加 `.txt`，*
 | `MINIMAX_USER_ID` | storage.json 里的 `realUserID` | ⭕ |
 | `MINIMAX_UUID` | 可选 | ➖ |
 | `MINIMAX_DEVICE_ID` | 可选 | ➖ |
+
+### 可选：账号显示名
+
+上游脚本只认序号（「账号1」），拿不到昵称，所以默认显示真实 ID 的短形式。
+想显示人话，去仓库 Secrets 加下面任意几个（**全部可选**，不填也能跑，多账号用逗号分隔）：
+
+| Secret | 对应平台 |
+|---|---|
+| `TRAE_LABEL` | Trae |
+| `WORKBUDDY_LABEL` | WorkBuddy |
+| `QODER_CN_LABEL` / `QODER_INTL_LABEL` | Qoder 中国版 / 国际版 |
+| `ZCODE_CN_LABEL` / `ZCODE_INTL_LABEL` | ZCode 国内版 / 国际版 |
+| `MINIMAX_LABEL` | MiniMax |
+
+例如填 `星野`、`156*******83`、`星野·主号`。
 | `WECOM_WEBHOOK` | `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx` | ⭕ |
 | `QYWX_TOKEN` | 企业微信 key（备用，与 WECOM_WEBHOOK 二选一即可） | ⭕ |
 | `PUSHPLUS_TOKEN` | PushPlus token（个人微信） | ⭕ |
