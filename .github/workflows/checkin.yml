@@ -23,6 +23,13 @@ jobs:
       # 必填！签到按「设备号」维度判定，没有客户端真实注册过的设备号会被拒成
       # 9074 或误报 9095（该设备当天已被别的账号用过），App 里会显示仍未签到。
       TRAE_DEVICE_ID:      ${{ secrets.TRAE_DEVICE_ID }}
+      # 新版 ExchangeToken 要求带设备签名：只给 refreshToken 时，runner 上必须补这三样，
+      # 否则续期会退到旧端点并被拒（10101 / 20405），而本机因为能读到客户端 accessToken
+      # 所以看起来"本地能跑、Actions 不能跑"。
+      # 取值：本机 `python trae_get_token.py --export-keys`
+      TRAE_DEVICE_KEY_PEM: ${{ secrets.TRAE_DEVICE_KEY_PEM }}
+      TRAE_DEVICE_PUB_PEM: ${{ secrets.TRAE_DEVICE_PUB_PEM }}
+      TRAE_MACHINE_ID:     ${{ secrets.TRAE_MACHINE_ID }}
       WORKBUDDY_REFRESH_TOKEN: ${{ secrets.WORKBUDDY_REFRESH_TOKEN }}
       QODER_TOKENS:            ${{ secrets.QODER_TOKENS }}
       QODER_GLOBAL_TOKENS:     ${{ secrets.QODER_GLOBAL_TOKENS }}
