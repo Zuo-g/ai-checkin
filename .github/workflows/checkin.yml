@@ -121,7 +121,14 @@ jobs:
 
           # 不少脚本签到失败时依然 exit 0（例如 token 被轮换作废），
           # 只看退出码会把失败报成成功，所以必须同时扫日志。
-          FAIL_RE='token失效|鉴权失败|not matched|[^0-9]10101[^0-9]|STATUS_ERR|Traceback \(most recent|read timed out|ConnectionError|Errno '
+          FAIL_RE='token失效|鉴权失败|not matched|\b10101\b|\b20101\b|refresh token is (invalid|not matched)|AUTH_EXPIRED|NO_CREDENTIAL|STATUS_ERR|Traceback \(most recent|read timed out|ConnectionError|Errno '
+
+          # 「token 本身已失效」的判定（只有命中它才允许清缓存）。
+          # 必须与 FAIL_RE 分开：FAIL 只是"这次没签成"，不代表 token 坏了。
+          # 限流 9074 / 超时 / 领取被拒 / 设备今日已签 这些都不是 token 的错，
+          # 这时缓存里可能躺着刚续期成功拿到的新 token —— 删掉就等于自己掐断轮换链，
+          # 下一轮回落到 Secret 里的旧值，从此永久 20101 / 401。这是反复失效的根因。
+          AUTH_RE='token失效|鉴权失败|not matched|\b10101\b|\b20101\b|refresh token is (invalid|not matched)|AUTH_EXPIRED|NO_CREDENTIAL|\b401\b'
 
           run_one () {
             local name="$1" file="$2" need="$3" key="$4"
@@ -140,13 +147,19 @@ jobs:
             local st="OK"
             if [ "$rc" -ne 0 ] || grep -qEi "$FAIL_RE" "../logs/$key.log"; then
               st="FAIL"
-              # 缓存里的 token 坏了就丢掉它，下一轮回落到 Secret 重新起链
-              case "$key" in
-                trae)      rm -f .trae_token_cache.json   ;;
-                minimax)   rm -f .minimax_token.json      ;;
-                workbuddy) rm -f wb_refresh_tokens.json   ;;
-              esac
-              echo "⚠️  $name 判定为失败（退出码 $rc + 日志扫描）"
+              # 只有「token 本身失效」才清缓存 —— 让下一轮回落到 Secret 重新起链。
+              # 其余失败一律保留缓存：里面可能是刚续期成功的新 token，
+              # 删掉会把轮换链自己掐断（历史上反复 20101/401 的主因之一）。
+              if grep -qEi "$AUTH_RE" "../logs/$key.log"; then
+                case "$key" in
+                  trae)      rm -f .trae_token_cache.json   ;;
+                  minimax)   rm -f .minimax_token.json      ;;
+                  workbuddy) rm -f wb_refresh_tokens.json   ;;
+                esac
+                echo "⚠️  $name 判定为失败（退出码 $rc）— 鉴权类错误，已清缓存待回落 Secret"
+              else
+                echo "⚠️  $name 判定为失败（退出码 $rc）— 非鉴权类（限流/超时/领取被拒），保留缓存"
+              fi
             fi
             # Trae 的 9095 = 「当前设备今日已被签过」，可能指的是别的账号，
             # 脚本会当成已签到上报。若账号状态仍是未签到，按失败处理，别报假成功。
