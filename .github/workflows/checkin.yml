@@ -484,13 +484,17 @@ jobs:
               return "".join(out)
 
 
-          # 推送内容：不显示未配置的平台。
-          # markdown 版不要标题（PushPlus 已用它做消息头）；HTML 版也不要把标题做进内容，
-          # 否则 PushPlus 顶部渲染一次（title）+ 内容里又渲染一次 = 重复显示。
-          content = build([r for r in rows if r[2] != "SKIP"], "")
-          content_html = build_html([r for r in rows if r[2] != "SKIP"], "")
-          # Actions 面板：保留完整信息，便于排查
-          summary = build(rows, "## AI 签到日报 · " + now)
+          # 只保留「已绑定」的平台：SKIP = 该平台没配 token（未绑定账号），
+          # 推送消息和 Actions 汇总都不显示，避免「未命名账号 · 跳过」这类噪音。
+          # 以后补上 token，它会自动重新出现，不用改 workflow。
+          active = [r for r in rows if r[2] != "SKIP"]
+
+          # 推送内容：markdown 版不要标题（PushPlus 已用它做消息头）；
+          # HTML 版也不要把标题做进内容，否则 PushPlus 顶部渲染一次 + 内容里又一次 = 重复。
+          content = build(active, "")
+          content_html = build_html(active, "")
+          # Actions 面板：同样只显示已绑定的平台
+          summary = build(active, "## AI 签到日报 · " + now)
 
           open("summary.md", "w", encoding="utf-8").write(summary + "\n")
           step = os.environ.get("GITHUB_STEP_SUMMARY")
