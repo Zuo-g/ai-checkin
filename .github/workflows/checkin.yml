@@ -398,7 +398,21 @@ jobs:
                   s = max([p for kw, p in PRIO if kw in l] or [0])
                   if s >= score:
                       best, score = l, s
-              return compact(best) if best and score > 0 else ""
+              if not best or score <= 0:
+                  return ""
+              # 多账号：脚本给每个账号各打一行「账号N 名字: 结果」，
+              # 上面同分时后行覆盖前行，只会剩下最后一个账号（看起来像账号1没跑）。
+              # 这里把每个账号那行都收进来，拼成「星野 xx；听风忆雪 xx」。
+              if re.search(r"账号\d+", best):
+                  same = list(dict.fromkeys(
+                      l for l in lines
+                      if re.search(r"账号\d+", l)
+                      and max([p for kw, p in PRIO if kw in l] or [0]) > 0))
+                  if same:
+                      return "；".join(
+                          re.sub(r"^账号\d+\s*|[:：]\s*", " ", compact(l)).strip()
+                          for l in same)
+              return compact(best)
 
           def credit_line(key):
               """积分情况"""
