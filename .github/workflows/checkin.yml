@@ -292,13 +292,26 @@ jobs:
               "minimax": "MINIMAX_LABEL",
           }
 
+          def looks_like_token(v):
+              """粗略判断一段字符串是不是凭据本身，用来防止把 token 当成显示名。
+
+              ZCode 的 token 行有两种三段写法：
+                「备注|jwt|mid」        ← 第 1 段是人写的备注
+                「jwt|mid|captcha」     ← 第 1 段其实是 jwt，没有备注
+              只看段数分不出来，得看第 1 段本身长什么样。
+              """
+              v = (v or "").strip()
+              return (v.count(".") >= 2 or len(v) > 40
+                      or v.startswith(("dt-", "drt-", "jt-", "jrt-", "eyJ")))
+
           def token_notes(key):
               """从 token 行自带的备注取显示名：「备注|access|refresh」的第 1 段。
 
               比单独的 *_LABEL secret 更可靠：名字和 token 写在同一处，
               增删账号时不会出现「名字个数和账号个数对不上」的错位，
               也不会因为忘了同步另一个 secret 而退回一串 UUID。
-              只要有一行没带备注就整体放弃（宁可退回短 ID，也不错位）。
+              只要有一行没带备注（或第 1 段本身就是 token）就整体放弃，
+              宁可退回短 ID，也不错位。
               """
               src = TOKEN_SRC.get(key)
               if not src:
@@ -306,7 +319,7 @@ jobs:
               out = []
               for t in split_tokens(os.environ.get(src[0], "")):
                   p = [x.strip() for x in t.split("|") if x.strip()]
-                  if len(p) < 3:
+                  if len(p) < 3 or looks_like_token(p[0]):
                       return []
                   out.append(p[0])
               return out
