@@ -292,7 +292,30 @@ jobs:
               "minimax": "MINIMAX_LABEL",
           }
 
+          def token_notes(key):
+              """从 token 行自带的备注取显示名：「备注|access|refresh」的第 1 段。
+
+              比单独的 *_LABEL secret 更可靠：名字和 token 写在同一处，
+              增删账号时不会出现「名字个数和账号个数对不上」的错位，
+              也不会因为忘了同步另一个 secret 而退回一串 UUID。
+              只要有一行没带备注就整体放弃（宁可退回短 ID，也不错位）。
+              """
+              src = TOKEN_SRC.get(key)
+              if not src:
+                  return []
+              out = []
+              for t in split_tokens(os.environ.get(src[0], "")):
+                  p = [x.strip() for x in t.split("|") if x.strip()]
+                  if len(p) < 3:
+                      return []
+                  out.append(p[0])
+              return out
+
           def account_label(key, log):
+              # 优先级：token 行备注 → *_LABEL secret → 真实 ID 短形式
+              notes = token_notes(key)
+              if notes:
+                  return "、".join(notes)
               names = [n.strip() for n in
                        re.split(r"[,，]", os.environ.get(LABEL_ENV.get(key, ""), "")) if n.strip()]
               if names:
