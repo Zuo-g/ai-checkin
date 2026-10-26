@@ -409,7 +409,7 @@ jobs:
                       if re.search(r"账号\d+", l)
                       and max([p for kw, p in PRIO if kw in l] or [0]) > 0))
                   if same:
-                      return "；".join(
+                      return "\n".join(
                           re.sub(r"^账号\d+\s*|[:：]\s*", " ", compact(l)).strip()
                           for l in same)
               return compact(best)
@@ -538,7 +538,7 @@ jobs:
                       main = note or status_line(key, st) or "已签到"
                       extras = [b for b in (streak_line(key), credit_line(key)) if b]
                       out.append('<div style="margin-top:8px;color:#333;font-size:15px;">%s</div>'
-                                 % esc(main))
+                                 % esc(main).replace("\n", "<br>"))
                       if extras:
                           out.append('<div style="margin-top:2px;color:#666;font-size:13px;">· %s</div>'
                                      % esc(" · ".join(extras)))
