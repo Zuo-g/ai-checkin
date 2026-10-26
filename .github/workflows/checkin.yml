@@ -261,7 +261,10 @@ jobs:
               if src:
                   out = []
                   for t in split_tokens(os.environ.get(src[0], "")):
-                      t = t.split("|")[0]
+                      # 每条支持三种写法：access / access|refresh / 备注|access|refresh
+                      # 三段式时第 1 段是备注，token 在第 2 段
+                      p = [x.strip() for x in t.split("|") if x.strip()]
+                      t = p[1] if len(p) >= 3 else (p[0] if p else "")
                       u = qoder_uid(t, src[1]) if src[1] else jwt_uid(t)
                       if u:
                           out.append(u)
