@@ -658,7 +658,8 @@ jobs:
               print("::add-mask::" + value)          # 防止 token 进日志
               env = dict(os.environ, GH_TOKEN=UPDATER)
               r = subprocess.run(
-                  ["gh", "secret", "set", name, "--body", value],
+                  ["gh", "secret", "set", name, "--repo", os.environ["GITHUB_REPOSITORY"],
+                   "--body", value],
                   env=env, capture_output=True, text=True)
               if r.returncode == 0:
                   print("  ✓ %s 已回写（长度 %d）" % (name, len(value)))
